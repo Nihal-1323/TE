@@ -1,0 +1,17 @@
+fastapi
+uvicorn
+python-multipart
+pydantic
+weaviate-client
+neo4j
+sentence-transformers
+torch
+transformers
+numpy
+pandas
+PyMuPDF
+librosa
+openai-whisper
+google-generativeai
+python-dotenv
+python-magic
