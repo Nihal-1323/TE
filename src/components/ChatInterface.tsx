@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Send, Sparkles, User, BrainCircuit, ExternalLink, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Send, Sparkles, BrainCircuit, AlertCircle, ChevronDown, Copy, Check } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { cn } from '../lib/utils';
 
@@ -15,6 +15,44 @@ interface ChatInterfaceProps {
   onLogAdd?: (log: string) => void;
 }
 
+function CodeBlock({ language, code }: { language?: string; code: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="my-2.5 rounded-md overflow-hidden border border-dash-line bg-[#0A0C10]">
+      <div className="bg-dash-surface/80 px-3 py-1 border-b border-dash-line/50 flex items-center justify-between text-[10px] font-mono text-dash-muted">
+        <span className="uppercase font-semibold tracking-wider text-dash-accent">{language || 'code'}</span>
+        <button
+          onClick={handleCopy}
+          className="flex items-center gap-1 hover:text-white transition-colors cursor-pointer px-1.5 py-0.5 rounded hover:bg-dash-line/40"
+          title="Copy code"
+        >
+          {copied ? (
+            <>
+              <Check className="w-3 h-3 text-emerald-400" />
+              <span className="text-emerald-400 text-[9px] font-sans">Copied</span>
+            </>
+          ) : (
+            <>
+              <Copy className="w-3 h-3" />
+              <span className="text-[9px] font-sans">Copy</span>
+            </>
+          )}
+        </button>
+      </div>
+      <pre className="p-3 overflow-x-auto text-[11px] font-mono leading-relaxed text-emerald-300">
+        <code>{code}</code>
+      </pre>
+    </div>
+  );
+}
+
 export default function ChatInterface({ onGraphUpdate, onLogAdd }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -25,6 +63,27 @@ export default function ChatInterface({ onGraphUpdate, onLogAdd }: ChatInterface
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
+
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = (smooth = true) => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' });
+    }
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, isTyping]);
+
+  const handleScroll = () => {
+    if (!scrollContainerRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
+    const isNearBottom = scrollHeight - scrollTop - clientHeight < 120;
+    setShowScrollBottom(!isNearBottom);
+  };
 
   const handleSend = async () => {
     const trimmedInput = input.trim();
@@ -38,7 +97,6 @@ export default function ChatInterface({ onGraphUpdate, onLogAdd }: ChatInterface
     onLogAdd?.(`[QUERY] Submitted query: "${trimmedInput}"`);
 
     try {
-      // Call backend /api/query (vite proxy to http://127.0.0.1:8000/query)
       const res = await fetch('/api/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -67,7 +125,6 @@ export default function ChatInterface({ onGraphUpdate, onLogAdd }: ChatInterface
       }
     } catch (err: any) {
       console.warn("API query failed, using resilient fallback:", err);
-      // Resilient local fallback in case backend is rebooting
       setTimeout(() => {
         const fallbackMsg: Message = {
           role: 'assistant',
@@ -91,7 +148,8 @@ export default function ChatInterface({ onGraphUpdate, onLogAdd }: ChatInterface
   };
 
   return (
-    <div className="flex flex-col h-full bg-dash-bg">
+    <div className="flex flex-col h-full min-h-0 overflow-hidden bg-dash-bg relative">
+      {/* Top Header */}
       <div className="p-3 border-b border-dash-line bg-dash-panel flex items-center justify-between shrink-0">
         <h2 className="mono-label flex items-center gap-2">
           <BrainCircuit className="w-3.5 h-3.5 text-dash-accent" />
@@ -100,19 +158,60 @@ export default function ChatInterface({ onGraphUpdate, onLogAdd }: ChatInterface
         <span className="text-[9px] bg-dash-surface px-1.5 py-0.5 rounded border border-dash-line text-dash-muted">RAG PIPELINE</span>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      {/* Scrollable Message List */}
+      <div 
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 overscroll-contain select-text"
+      >
         {messages.map((msg, i) => (
           <div key={i} className={cn(
-            "flex flex-col gap-1.5 max-w-[95%]",
+            "flex flex-col gap-1.5 max-w-[96%]",
             msg.role === 'user' ? "ml-auto" : "mr-auto"
           )}>
             <div className={cn(
-              "p-3 rounded-lg text-xs leading-relaxed border relative",
+              "p-3.5 rounded-lg text-xs leading-relaxed border relative shadow-sm",
               msg.role === 'user' 
-                ? "bg-dash-surface border-dash-accent/30 text-dash-text ml-8" 
-                : "bg-dash-panel border-dash-line text-dash-text mr-8"
+                ? "bg-dash-surface border-dash-accent/40 text-dash-text ml-8" 
+                : "bg-dash-panel border-dash-line text-dash-text mr-4"
             )}>
-              <ReactMarkdown>{msg.content}</ReactMarkdown>
+              <ReactMarkdown
+                components={{
+                  h1: ({ children }) => <h1 className="text-sm font-bold text-white mt-3 mb-1.5">{children}</h1>,
+                  h2: ({ children }) => <h2 className="text-sm font-bold text-white mt-3 mb-1.5">{children}</h2>,
+                  h3: ({ children }) => <h3 className="text-xs font-bold text-white mt-2.5 mb-1 flex items-center gap-1.5">{children}</h3>,
+                  h4: ({ children }) => <h4 className="text-[11px] font-semibold text-indigo-400 mt-2 mb-1">{children}</h4>,
+                  h5: ({ children }) => <h5 className="text-[10px] font-semibold text-dash-text mt-1.5 mb-0.5">{children}</h5>,
+                  p: ({ children }) => <p className="mb-2 leading-relaxed text-dash-text last:mb-0">{children}</p>,
+                  ul: ({ children }) => <ul className="list-disc list-inside space-y-1 mb-2 pl-1 text-dash-text">{children}</ul>,
+                  ol: ({ children }) => <ol className="list-decimal list-inside space-y-1 mb-2 pl-1 text-dash-text">{children}</ol>,
+                  li: ({ children }) => <li className="text-xs leading-relaxed text-dash-text">{children}</li>,
+                  blockquote: ({ children }) => (
+                    <blockquote className="border-l-2 border-indigo-500/60 bg-indigo-950/20 rounded-r px-3 py-1.5 my-2 text-[11px] text-dash-muted italic">
+                      {children}
+                    </blockquote>
+                  ),
+                  code({ node, inline, className, children, ...props }: any) {
+                    const match = /language-(\w+)/.exec(className || '');
+                    const codeText = String(children).replace(/\n$/, '');
+                    if (inline) {
+                      return (
+                        <code className="bg-[#0A0C10] text-indigo-300 px-1.5 py-0.5 rounded text-[10px] font-mono border border-dash-line" {...props}>
+                          {children}
+                        </code>
+                      );
+                    }
+                    return (
+                      <CodeBlock 
+                        language={match ? match[1] : undefined} 
+                        code={codeText} 
+                      />
+                    );
+                  }
+                }}
+              >
+                {msg.content}
+              </ReactMarkdown>
             </div>
             
             {msg.thoughtProcess && (
@@ -140,20 +239,34 @@ export default function ChatInterface({ onGraphUpdate, onLogAdd }: ChatInterface
           </div>
         ))}
         {isTyping && (
-          <div className="flex gap-2 p-2 border border-dash-line bg-dash-panel w-fit rounded-lg animate-pulse ml-2 text-[10px] text-dash-muted">
+          <div className="flex gap-2 p-2.5 border border-dash-line bg-dash-panel w-fit rounded-lg animate-pulse ml-2 text-[10px] text-dash-muted">
             <Sparkles className="w-3.5 h-3.5 text-dash-accent" />
             Generating grounded response...
           </div>
         )}
+        <div ref={messagesEndRef} className="h-px" />
       </div>
 
+      {/* Floating Scroll to Bottom Button */}
+      {showScrollBottom && (
+        <button
+          onClick={() => scrollToBottom(true)}
+          className="absolute bottom-16 right-5 p-2 rounded-full bg-dash-accent text-white shadow-lg hover:scale-105 active:scale-95 transition-all z-20 flex items-center justify-center cursor-pointer border border-white/20"
+          title="Scroll to bottom"
+        >
+          <ChevronDown className="w-4 h-4" />
+        </button>
+      )}
+
+      {/* Error Bar */}
       {errorMsg && (
-        <div className="px-3 py-1 bg-dash-surface border-t border-dash-line text-[9px] text-yellow-500 flex items-center gap-1.5">
+        <div className="px-3 py-1 bg-dash-surface border-t border-dash-line text-[9px] text-yellow-500 flex items-center gap-1.5 shrink-0">
           <AlertCircle className="w-3 h-3" />
           <span>{errorMsg}</span>
         </div>
       )}
 
+      {/* Pinned Input Bar */}
       <div className="p-3 bg-dash-panel border-t border-dash-line shrink-0">
         <div className="relative">
           <input
@@ -169,7 +282,7 @@ export default function ChatInterface({ onGraphUpdate, onLogAdd }: ChatInterface
              <button 
                onClick={handleSend}
                disabled={isTyping}
-               className="p-1 bg-dash-accent rounded hover:opacity-90 transition-opacity disabled:opacity-50"
+               className="p-1 bg-dash-accent rounded hover:opacity-90 transition-opacity disabled:opacity-50 cursor-pointer"
              >
                <Send className="w-3 h-3 text-white" />
              </button>

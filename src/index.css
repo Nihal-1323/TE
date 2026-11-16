@@ -34,14 +34,23 @@
   }
 
   /* Scrollbar styling */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #3b3f4d #0F1115;
+  }
   ::-webkit-scrollbar {
-    width: 4px;
+    width: 6px;
+    height: 6px;
   }
   ::-webkit-scrollbar-track {
-    @apply bg-dash-bg;
+    background: #0F1115;
   }
   ::-webkit-scrollbar-thumb {
-    @apply bg-dash-line rounded-full hover:bg-dash-muted/40;
+    background: #3b3f4d;
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #6366F1;
   }
 }
 

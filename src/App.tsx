@@ -199,9 +199,9 @@ export default function App() {
         </header>
 
         {/* Dashboard Grid */}
-        <div className="flex-1 overflow-hidden grid grid-cols-12 gap-px bg-dash-line">
+        <div className="flex-1 min-h-0 overflow-hidden grid grid-cols-12 gap-px bg-dash-line">
            {/* Left: Chat Control */}
-           <div className="col-span-12 lg:col-span-4 h-full bg-dash-bg">
+           <div className="col-span-12 lg:col-span-4 h-full min-h-0 overflow-hidden bg-dash-bg flex flex-col">
               <ChatInterface 
                 onGraphUpdate={(g) => setGraphData(g)} 
                 onLogAdd={addLog}
@@ -209,7 +209,7 @@ export default function App() {
            </div>
 
            {/* Right Toolset */}
-           <div className="col-span-12 lg:col-span-8 flex flex-col h-full bg-dash-bg">
+           <div className="col-span-12 lg:col-span-8 flex flex-col h-full min-h-0 overflow-hidden bg-dash-bg">
               <div className="flex-1 grid grid-cols-2 gap-px border-b border-dash-line bg-dash-line min-h-0">
                  <div className="bg-dash-bg overflow-hidden relative">
                     <GraphView externalGraphData={graphData} />
