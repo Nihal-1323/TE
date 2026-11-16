@@ -10,4 +10,7 @@ coverage/
 __pycache__/
 *.pyc
 .venv/
+backend/uploads/*
+!backend/uploads/.gitkeep
+*.pdf
 TE-main.zip

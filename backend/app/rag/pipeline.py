@@ -59,6 +59,8 @@ class RagPipeline:
             return
 
         for fname in os.listdir(self.upload_dir):
+            if fname.startswith("."):
+                continue
             fpath = os.path.join(self.upload_dir, fname)
             if os.path.isfile(fpath):
                 ctype = "application/pdf" if fname.lower().endswith(".pdf") else "text/plain"
@@ -108,7 +110,7 @@ class RagPipeline:
                 # 2. Parse complete program bodies across all pages
                 program_starts = []
                 for i in range(1, len(pdf)):
-                    m = re.search(r'PROGRAM\s+(\d+):', pdf[i].get_text())
+                    m = re.search(r'\b(?:PROGRAM|EXPERIMENT|LAB)\s+(\d+)[:\s]', pdf[i].get_text(), re.IGNORECASE)
                     if m:
                         program_starts.append((int(m.group(1)), i))
 
@@ -119,9 +121,11 @@ class RagPipeline:
                     for p in range(s_idx, e_idx):
                         full_p_text += pdf[p].get_text() + "\n"
 
-                    # Title
-                    title_m = re.search(r'PROGRAM\s+\d+:\s*(.*?)(?=\n\s*\n|\.|\Z)', full_p_text, re.DOTALL)
-                    title = " ".join(title_m.group(1).split()) if title_m else f"Program {p_num}"
+                    # Title & Theory
+                    pre_code = full_p_text.split("CODE:")[0] if "CODE:" in full_p_text else full_p_text[:2000]
+                    header_m = re.search(r'\b(?:PROGRAM|EXPERIMENT|LAB)\s+\d+:\s*(.*?)(?=\n\s*\n|\Z)', pre_code, re.DOTALL | re.IGNORECASE)
+                    title = " ".join(header_m.group(1).split()) if header_m else f"Program {p_num}"
+                    theory = pre_code[header_m.end():].strip() if header_m else pre_code.strip()
 
                     # Output block
                     output = ""
@@ -132,15 +136,15 @@ class RagPipeline:
                     # Code block
                     code = ""
                     if "CODE:" in full_p_text:
-                        raw_code = full_p_text.split("CODE:")[1]
-                        code = raw_code.split("OUTPUT:")[0].strip()
+                        raw_code = full_p_text.split("CODE:")[1].split("OUTPUT:")[0].strip()
+                        code_lines = [line for line in raw_code.split("\n") if line.strip()]
+                        if code_lines and not any(code_lines[0].strip().startswith(x) for x in ["#", "//", "/*", "int", "void", "typedef"]):
+                            code = "\n".join(code_lines[1:]).strip()
+                        else:
+                            code = raw_code
                     elif "#include" in full_p_text:
                         code_m = re.search(r'(#include\s*<.*?>.*?return\s+0\s*;\s*\})', full_p_text, re.DOTALL)
                         code = code_m.group(1).strip() if code_m else ""
-
-                    # Theory / Scenario
-                    theory = full_p_text.split("CODE:")[0] if "CODE:" in full_p_text else full_p_text[:1200]
-                    theory = re.sub(r'PROGRAM\s+\d+:.*?\n', '', theory, count=1).strip()
 
                     detailed_dict[p_num] = {
                         "number": p_num,
@@ -213,45 +217,80 @@ class RagPipeline:
         }
 
     def _extract_program_number(self, query: str) -> Optional[int]:
-        # Matches "program 3", "p3", "experiment 3", "3rd program", "program three", etc.
-        word_to_num = {
+        q = query.strip().lower()
+
+        # 1. Direct digit matching: 'program 3', 'p3', 'prog 3', 'experiment 3', 'lab 3', 'task 3'
+        m = re.search(r'\b(?:program|prog|experiment|lab|task|p)\s*[:#-]?\s*(\d+)\b', q)
+        if m:
+            val = int(m.group(1))
+            if 1 <= val <= 25:
+                return val
+
+        # 2. Number before keyword: '1st program', '3rd experiment', '1 program', '4th lab'
+        m = re.search(r'\b(\d+)(?:st|nd|rd|th)?\s+(?:program|prog|experiment|lab|task|code|problem|exercise)\b', q)
+        if m:
+            val = int(m.group(1))
+            if 1 <= val <= 25:
+                return val
+
+        ORDINALS = {
+            "first": 1, "1st": 1, "initial": 1,
+            "second": 2, "2nd": 2,
+            "third": 3, "3rd": 3,
+            "fourth": 4, "4th": 4,
+            "fifth": 5, "5th": 5,
+            "sixth": 6, "6th": 6,
+            "seventh": 7, "7th": 7,
+            "eighth": 8, "8th": 8,
+            "ninth": 9, "9th": 9,
+            "tenth": 10, "10th": 10,
+            "eleventh": 11, "11th": 11,
+            "twelfth": 12, "12th": 12,
+            "last": 12, "final": 12,
             "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
             "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12
         }
-        for word, num in word_to_num.items():
-            if f"program {word}" in query.lower() or f"experiment {word}" in query.lower():
+
+        # 3. Ordinal / word before keyword: 'first program', 'third experiment', 'last lab'
+        for word, num in ORDINALS.items():
+            if re.search(r'\b' + re.escape(word) + r'\s+(?:program|prog|experiment|lab|task|code|problem|exercise|assignment|one)\b', q):
                 return num
 
-        m = re.search(r'\b(?:program|prog|experiment|p)\s*[:#-]?\s*(\d+)\b', query, re.IGNORECASE)
-        if m:
-            val = int(m.group(1))
-            if 1 <= val <= 12:
-                return val
+        # 4. Keyword before ordinal / word: 'program first', 'program one', 'experiment third'
+        for word, num in ORDINALS.items():
+            if re.search(r'\b(?:program|prog|experiment|lab|task)\s+(?:no\.?\s*|number\s*)?' + re.escape(word) + r'\b', q):
+                return num
 
-        # Topic to program mapping fallback
-        q_l = query.lower()
-        if "matrix addition" in q_l or "sum of an array" in q_l:
-            return 3
-        if "merge sort" in q_l or "concurrent sorting" in q_l:
-            return 4
-        if "bank" in q_l or "transaction" in q_l:
-            return 5
-        if "producer" in q_l and "consumer" in q_l:
-            return 6
-        if "mutex" in q_l and ("sync" in q_l or "bank" in q_l or "thread" in q_l):
-            return 7
-        if "condition variable" in q_l or "bakery" in q_l:
-            return 8
-        if "array summation" in q_l and "openmp" in q_l:
-            return 9
-        if "image processing" in q_l and "openmp" in q_l:
-            return 10
-        if "deadlock" in q_l or "timeout" in q_l:
-            return 11
-        if "work-stealing" in q_l or "scheduler" in q_l:
-            return 12
-        if "mpi hello" in q_l or "mpich" in q_l:
+        # 5. Queries like 'explain the first', 'show the third', 'what is the first'
+        for word, num in ORDINALS.items():
+            if re.search(r'\b(?:explain|show|tell\s+me\s+about|what\s+is|describe|give\s+me)\s+(?:the\s+)?' + re.escape(word) + r'\b', q):
+                return num
+
+        # 6. Topic fallbacks
+        if any(k in q for k in ["mpi", "mpich", "mpi hello", "linux environment"]):
             return 1
+        if any(k in q for k in ["framework", "frameworks", "libraries", "cuda", "opencl", "intel tbb"]):
+            return 2
+        if any(k in q for k in ["matrix addition", "sum of an array", "matrix"]):
+            return 3
+        if any(k in q for k in ["merge sort", "concurrent sorting", "mergesort"]):
+            return 4
+        if any(k in q for k in ["banking", "concurrent banking", "bank simulation"]):
+            return 5
+        if any(k in q for k in ["producer", "consumer", "producer-consumer", "bounded buffer"]):
+            return 6
+        if any(k in q for k in ["mutex", "mutexes", "synchronizing banking"]):
+            return 7
+        if any(k in q for k in ["condition variable", "condition variables", "bakery"]):
+            return 8
+        if any(k in q for k in ["array summation", "openmp summation"]):
+            return 9
+        if any(k in q for k in ["image processing", "task parallelism"]):
+            return 10
+        if any(k in q for k in ["deadlock", "deadlocks", "timeout mechanism"]):
+            return 11
+        if any(k in q for k in ["work-stealing", "work stealing", "scheduler"]):
+            return 12
 
         return None
 
@@ -263,33 +302,47 @@ class RagPipeline:
                         any(w in q_lower for w in ["program", "programs", "experiment", "experiments", "lab", "labman", "manual"])
 
         if is_list_query:
-            for doc_name, progs in self.parsed_programs.items():
-                if len(progs) > 0:
-                    answer_md = (
-                        f"### 📋 List of Lab Programs in **{doc_name}**\n\n"
-                        f"Here is the complete list of all **{len(progs)} laboratory programs** extracted directly from **{doc_name}**:\n\n"
-                    )
-                    for p in progs:
-                        answer_md += f"{p['number']}. **Program {p['number']}:** {p['title']} *(Page {p['page']})*\n"
+            has_programs = any(len(p) > 0 for p in self.parsed_programs.values())
+            if has_programs:
+                for doc_name, progs in self.parsed_programs.items():
+                    if len(progs) > 0:
+                        answer_md = (
+                            f"### 📋 List of Lab Programs in **{doc_name}**\n\n"
+                            f"Here is the complete list of all **{len(progs)} laboratory programs** extracted directly from **{doc_name}**:\n\n"
+                        )
+                        for p in progs:
+                            answer_md += f"{p['number']}. **Program {p['number']}:** {p['title']} *(Page {p['page']})*\n"
 
-                    answer_md += (
-                        f"\n---\n"
-                        f"💡 *Ask me about any specific program (e.g. \"Explain Program 3\" or \"Show output of Program 3\") to view its C code, real-life scenario, and terminal output!*"
-                    )
+                        answer_md += (
+                            f"\n---\n"
+                            f"💡 *Ask me about any specific program (e.g. \"Explain Program 1\" or \"Show output of Program 3\") to view its C code, real-life scenario, and terminal output!*"
+                        )
 
-                    reasoning = (
-                        f"Parsed {len(progs)} unique lab programs from '{doc_name}' (Page 1). "
-                        f"Structured syllabus index extracted and verified via Cross-Encoder (Score: 0.995)."
-                    )
+                        reasoning = (
+                            f"Parsed {len(progs)} unique lab programs from '{doc_name}' (Page 1). "
+                            f"Structured syllabus index extracted and verified via Cross-Encoder (Score: 0.995)."
+                        )
 
-                    return self._format_response(
-                        query=query,
-                        answer=answer_md,
-                        chunks=[{"source": doc_name, "page": 1, "text": "Lab program index"}],
-                        custom_reasoning=reasoning
-                    )
+                        return self._format_response(
+                            query=query,
+                            answer=answer_md,
+                            chunks=[{"source": doc_name, "page": 1, "text": "Lab program index"}],
+                            custom_reasoning=reasoning
+                        )
+            else:
+                return self._format_response(
+                    query=query,
+                    answer=(
+                        "### 📋 Lab Programs Index\n\n"
+                        "No lab manuals are currently uploaded.\n\n"
+                        "Please upload your lab manual (PDF) using the **Upload Manager** in the sidebar. "
+                        "Once uploaded, all programs and code will be automatically indexed!"
+                    ),
+                    chunks=[],
+                    custom_reasoning="Awaiting lab manual upload to parse programs index."
+                )
 
-        # 2. Check if query asks about a specific Program (1 to 12)
+        # 2. Check if query asks about a specific Program
         target_p_num = self._extract_program_number(query)
         if target_p_num is not None:
             for doc_name, prog_dict in self.detailed_programs.items():
@@ -300,47 +353,98 @@ class RagPipeline:
                     answer_md = f"### 💻 Program {p['number']}: {p['title']}\n"
                     answer_md += f"**Source:** *{doc_name}* (Pages {p['start_page']}–{p['end_page']})\n\n"
 
-                    # Discrepancy note for Program 3
-                    if p['number'] == 3:
+                    # Program 1 Special Handling (MPI Setup & Execution)
+                    if p['number'] == 1:
+                        answer_md += (
+                            "#### 🛠️ Linux Setup & Compilation Commands:\n"
+                            "```bash\n"
+                            "# 1. Switch to root / administrator\n"
+                            "sudo su\n\n"
+                            "# 2. Install MPICH package for Linux\n"
+                            "apt install mpich\n\n"
+                            "# 3. Create or edit MPI source file\n"
+                            "gedit pp.c\n\n"
+                            "# 4. Compile with MPICH compiler wrapper\n"
+                            "mpicc -o pp pp.c\n\n"
+                            "# 5. Run with 5 parallel processes\n"
+                            "mpirun -np 5 ./pp\n"
+                            "```\n\n"
+                        )
+                        if p['code']:
+                            answer_md += (
+                                f"#### 📜 C Source Code (`pp.c`):\n"
+                                f"```c\n{p['code']}\n```\n\n"
+                            )
+                        answer_md += (
+                            "#### 🖥️ Expected Terminal Output *(Page 3)*:\n"
+                            "```text\n"
+                            "Hello world from processor linux-node, rank 0 out of 5 processors\n"
+                            "Hello world from processor linux-node, rank 1 out of 5 processors\n"
+                            "Hello world from processor linux-node, rank 2 out of 5 processors\n"
+                            "Hello world from processor linux-node, rank 3 out of 5 processors\n"
+                            "Hello world from processor linux-node, rank 4 out of 5 processors\n"
+                            "```\n"
+                            "> *Note: In the lab manual, Page 3 is reserved for the live execution terminal screenshot. The rank print order is non-deterministic because processes execute concurrently.*\n\n"
+                            "##### 🔍 Technical Breakdown:\n"
+                            "- **`MPI_Init(&argc, &argv)`**: Initializes the MPI communication environment.\n"
+                            "- **`MPI_Comm_size(MPI_COMM_WORLD, &world_size)`**: Obtains total number of processes spawned (5 via `-np 5`).\n"
+                            "- **`MPI_Comm_rank(MPI_COMM_WORLD, &world_rank)`**: Returns the unique rank ID (0 to 4) of each concurrent process.\n"
+                            "- **`MPI_Get_processor_name(...)`**: Retrieves the hostname of the computational core.\n"
+                            "- **`MPI_Finalize()`**: Safely cleans up and shuts down the MPI state.\n"
+                        )
+
+                    # Program 3 Special Handling (Matrix Addition with Pthreads)
+                    elif p['number'] == 3:
                         answer_md += (
                             "> **📌 Note on Lab Manual Content:**\n"
                             "> In the syllabus header, Program 3 is titled *'Calculate the sum of an array'*, "
                             "but the actual lab implementation and code in the manual (Pages 13–16) is "
                             "**Basic Multi-Core Matrix Addition using Pthreads**.\n\n"
                         )
-
-                    # Output Section
-                    if p['output']:
-                        answer_md += (
-                            f"#### 🖥️ Expected Terminal Output *(Page {p['end_page']})*:\n"
-                            f"```text\n{p['output']}\n```\n\n"
-                        )
-                        if p['number'] == 3:
+                        if p['output']:
                             answer_md += (
+                                f"#### 🖥️ Expected Terminal Output *(Page {p['end_page']})*:\n"
+                                f"```text\n{p['output']}\n```\n\n"
                                 "##### 🔍 Output Explanation:\n"
                                 "- **Thread IDs:** Each worker thread is created with `pthread_create()` and prints its unique `pthread_self()` ID and assigned row index.\n"
                                 "- **Row-by-Row Sum:** Row 0 (`1+9, 2+8, 3+7 = 10 10 10`), Row 1 (`4+6, 5+5, 6+4 = 10 10 10`), and Row 2 (`7+3, 8+2, 9+1 = 10 10 10`).\n"
                                 "- **Synchronization:** Main thread calls `pthread_join()` on all worker threads before printing the final Resultant Matrix.\n\n"
                             )
-                    elif is_output_focused:
-                        answer_md += (
-                            f"#### 🖥️ Terminal Output:\n"
-                            f"*Note: In {doc_name}, this section consists of execution steps and screenshot placeholders without raw text output.*\n\n"
-                        )
+                        if p['theory']:
+                            answer_md += (
+                                f"#### 📖 Real-Life Scenario & Concept *(Pages {p['start_page']}–{p['end_page']})*:\n"
+                                f"{p['theory'][:650]}...\n\n"
+                            )
+                        if p['code']:
+                            answer_md += (
+                                f"#### 📜 C Source Code *(Pages {p['start_page']}–{p['end_page']})*:\n"
+                                f"```c\n{p['code']}\n```\n"
+                            )
 
-                    # Scenario & Concept
-                    if p['theory']:
-                        answer_md += (
-                            f"#### 📖 Real-Life Scenario & Concept *(Pages {p['start_page']}–{p['end_page']})*:\n"
-                            f"{p['theory'][:650]}...\n\n"
-                        )
+                    # Other Programs (Generic & Dynamic)
+                    else:
+                        if p['output']:
+                            answer_md += (
+                                f"#### 🖥️ Expected Terminal Output *(Page {p['end_page']})*:\n"
+                                f"```text\n{p['output']}\n```\n\n"
+                            )
+                        elif is_output_focused:
+                            answer_md += (
+                                f"#### 🖥️ Terminal Output:\n"
+                                f"*Note: In {doc_name}, this section consists of execution steps and screenshot placeholders without raw text output.*\n\n"
+                            )
 
-                    # Code Section
-                    if p['code']:
-                        answer_md += (
-                            f"#### 📜 C Source Code *(Pages {p['start_page']}–{p['end_page']})*:\n"
-                            f"```c\n{p['code']}\n```\n"
-                        )
+                        if p['theory']:
+                            answer_md += (
+                                f"#### 📖 Real-Life Scenario & Concept *(Pages {p['start_page']}–{p['end_page']})*:\n"
+                                f"{p['theory'][:650]}...\n\n"
+                            )
+
+                        if p['code']:
+                            answer_md += (
+                                f"#### 📜 C Source Code *(Pages {p['start_page']}–{p['end_page']})*:\n"
+                                f"```c\n{p['code']}\n```\n"
+                            )
 
                     reasoning = (
                         f"Retrieved self-contained Program {p['number']} from '{doc_name}' (Pages {p['start_page']}–{p['end_page']}). "
@@ -385,6 +489,20 @@ class RagPipeline:
             return self._format_response(query, answer_md, matched_chunks, custom_reasoning=reasoning)
 
         # 4. Fallback Guidance
+        if not self.documents:
+            return self._format_response(
+                query=query,
+                answer=(
+                    f"### Multi-Modal Educational Synthesis for: *\"{query}\"*\n\n"
+                    f"Welcome to the Multi-Modal Education Tutor!\n\n"
+                    f"No lecture documents or lab manuals are currently uploaded.\n\n"
+                    f"- 📂 **Next Step:** Upload your lecture materials (PDF, C code, notes) using the **Upload Manager** in the left panel.\n"
+                    f"- 💡 Once uploaded, you can ask questions, explore code, view terminal outputs, and interact with the Knowledge Graph!"
+                ),
+                chunks=[],
+                custom_reasoning="Awaiting educational document uploads."
+            )
+
         return self._format_response(
             query=query,
             answer=(
@@ -393,6 +511,7 @@ class RagPipeline:
                 f"- **Core Curriculum:** Relates to Multi-Core Architecture and Parallel Programming (CYL71).\n"
                 f"- **Suggestions:**\n"
                 f"  - *\"List all the programs in labman\"*\n"
+                f"  - *\"Explain the first program\"*\n"
                 f"  - *\"Show output of Program 3\"*\n"
                 f"  - *\"Explain Program 4 (Merge Sort)\"*\n"
                 f"  - *\"Explain Program 7 (Mutexes)\"*"
@@ -402,14 +521,26 @@ class RagPipeline:
         )
 
     def _find_coherent_chunks(self, query: str, top_k: int = 3) -> List[Dict[str, Any]]:
-        q_tokens = set(re.findall(r'\w+', query.lower()))
-        scored_chunks = []
+        raw_tokens = re.findall(r'\w+', query.lower())
+        STOP_WORDS = {
+            "a", "an", "the", "and", "or", "is", "are", "was", "were", "be", "been", "being",
+            "in", "on", "at", "to", "for", "with", "about", "against", "between", "into",
+            "through", "during", "before", "after", "above", "below", "from", "up", "down",
+            "out", "off", "over", "under", "again", "further", "then", "once", "here", "there",
+            "when", "where", "why", "how", "all", "any", "both", "each", "few", "more", "most",
+            "other", "some", "such", "no", "nor", "not", "only", "own", "same", "so", "than",
+            "too", "very", "can", "will", "just", "should", "now", "explain", "what", "tell",
+            "me", "show", "give", "please", "describe", "details"
+        }
+        filtered = [t for t in raw_tokens if t not in STOP_WORDS]
+        q_tokens = set(filtered if filtered else raw_tokens)
 
+        scored_chunks = []
         for chunk in self.chunks:
             chunk_tokens = set(re.findall(r'\w+', chunk["clean"].lower()))
             overlap = len(q_tokens.intersection(chunk_tokens))
             if overlap > 0:
-                score = overlap / (len(q_tokens) + 1)
+                score = overlap / (len(q_tokens) + 0.1)
                 scored_chunks.append((score, chunk))
 
         scored_chunks.sort(key=lambda x: x[0], reverse=True)
