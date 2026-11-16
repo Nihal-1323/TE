@@ -99,7 +99,10 @@ export default function ChatInterface({ onGraphUpdate, onLogAdd }: ChatInterface
     try {
       const res = await fetch('/api/query', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'localtonet-skip-warning': 'true'
+        },
         body: JSON.stringify({ query: trimmedInput, session_id: 'default' })
       });
 

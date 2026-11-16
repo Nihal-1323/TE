@@ -44,7 +44,9 @@ export default function App() {
 
   const fetchHealthAndDocs = async () => {
     try {
-      const res = await fetch('/api/health');
+      const res = await fetch('/api/health', {
+        headers: { 'localtonet-skip-warning': 'true' }
+      });
       if (res.ok) {
         setBackendStatus('healthy');
       } else {
@@ -55,7 +57,9 @@ export default function App() {
     }
 
     try {
-      const docRes = await fetch('/api/documents');
+      const docRes = await fetch('/api/documents', {
+        headers: { 'localtonet-skip-warning': 'true' }
+      });
       if (docRes.ok) {
         const json = await docRes.json();
         setDocuments(json.documents || []);
@@ -233,7 +237,7 @@ export default function App() {
            <div className="flex items-center gap-2">
              <span className="text-[9px] text-dash-muted uppercase font-bold tracking-tighter">
                {backendStatus === 'healthy' 
-                 ? 'Services: Backend API Online (FastAPI 1.2.4)' 
+                 ? 'Services: Backend API Online (h49w5vlaz2.localto.net)' 
                  : 'Services: Local Resilience Mode'}
              </span>
            </div>

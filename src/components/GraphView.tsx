@@ -32,7 +32,9 @@ export default function GraphView({ externalGraphData, onNodeSelect }: GraphView
 
   const fetchGraph = async () => {
     try {
-      const res = await fetch('/api/graph');
+      const res = await fetch('/api/graph', {
+        headers: { 'localtonet-skip-warning': 'true' }
+      });
       if (res.ok) {
         const json = await res.json();
         if (json.nodes && json.nodes.length) {

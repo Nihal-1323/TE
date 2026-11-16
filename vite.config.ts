@@ -5,10 +5,13 @@ import {defineConfig, loadEnv} from 'vite';
 
 export default defineConfig(({mode}) => {
   const env = loadEnv(mode, '.', '');
+  const backendUrl = env.VITE_BACKEND_URL || 'https://h49w5vlaz2.localto.net';
+
   return {
     plugins: [react(), tailwindcss()],
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
+      'process.env.VITE_BACKEND_URL': JSON.stringify(backendUrl),
     },
     resolve: {
       alias: {
@@ -20,8 +23,12 @@ export default defineConfig(({mode}) => {
       host: '0.0.0.0',
       proxy: {
         '/api': {
-          target: 'http://127.0.0.1:8000',
+          target: backendUrl,
           changeOrigin: true,
+          secure: false,
+          headers: {
+            'localtonet-skip-warning': 'true',
+          },
           rewrite: (path) => path.replace(/^\/api/, ''),
         },
       },

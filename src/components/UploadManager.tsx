@@ -39,6 +39,9 @@ export default function UploadManager({ onUploadSuccess, onLogAdd }: UploadManag
 
         const res = await fetch('/api/upload', {
           method: 'POST',
+          headers: {
+            'localtonet-skip-warning': 'true'
+          },
           body: formData
         });
 
